@@ -4,7 +4,39 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:math';
+import 'package:local_auth/local_auth.dart'; //
 
+class LocalAuthService {
+  final LocalAuthentication _localAuth = LocalAuthentication();
+
+  Future<bool> checkBiometrics() async {
+    try {
+      return await _localAuth.canCheckBiometrics;
+    } catch (e) {
+      print('Error checking biometrics: $e');
+      return false;
+    }
+  }
+
+  Future<bool> authenticate(String reason) async {
+    try {
+      final bool didAuthenticate = await _localAuth.authenticate(
+        localizedReason: reason,
+        // PERBAIKAN DI SINI: ganti 'authoptions' menjadi 'authOptions'
+        options: const AuthenticationOptions( 
+          stickyAuth: true,
+          biometricOnly: true,
+        ),
+      );
+      return didAuthenticate;
+    } on Exception catch (e) {
+      print('Error during authentication: $e');
+      return false;
+    }
+  }
+}
+
+final _localAuthService = LocalAuthService(); // Instance global
 // --- Konfigurasi Firebase Anda ---
 // Gunakan konfigurasi yang diberikan sebelumnya
 const FirebaseOptions myFirebaseOptions = FirebaseOptions(
@@ -19,8 +51,9 @@ const FirebaseOptions myFirebaseOptions = FirebaseOptions(
 // ---------------------------------
 
 // Inisialisasi Firebase dan Database Ref
-final FirebaseAuth _auth = FirebaseAuth.instance;
-final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
+late final FirebaseAuth _auth = FirebaseAuth.instance;
+late final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
+
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,7 +68,7 @@ void main() async {
   
   // Memastikan user 'admin' ada
   await _initializeAdmin();
-  
+  await _auth.signOut();
   runApp(const ArchelStoreApp());
 }
 
@@ -367,7 +400,6 @@ class ArchelStoreApp extends StatelessWidget {
     return null;
   }
 }
-
 // =========================================================================
 // 4. LAYAR OTENTIKASI (LOGIN, REGISTER, LUPA PASSWORD)
 // =========================================================================
@@ -428,10 +460,11 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 }
 
-// --- WIDGET LOGIN ---
+// --- WIDGET LOGIN 🚀 ---
 class LoginForm extends StatefulWidget {
   final VoidCallback onRegister;
   final VoidCallback onForgot;
+
   const LoginForm({required this.onRegister, required this.onForgot, super.key});
 
   @override
@@ -439,72 +472,44 @@ class LoginForm extends StatefulWidget {
 }
 
 class _LoginFormState extends State<LoginForm> {
-  final _formKey = GlobalKey<FormState>();
-  final TextEditingController _userPhoneController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _isLoading = false;
   String _message = '';
 
   Future<void> _login() async {
-    if (!_formKey.currentState!.validate()) return;
-    
     setState(() {
       _isLoading = true;
       _message = '';
     });
 
-    final input = _userPhoneController.text.trim();
+    final username = _usernameController.text.trim();
     final password = _passwordController.text;
-
-    // Cek apakah input adalah 'admin'
-    if (input == 'admin' && password == 'admin123') {
-      try {
-        // Menggunakan Email/Password statis untuk admin
-        await _auth.signInWithEmailAndPassword(email: 'admin@archelstore.com', password: 'admin123');
-      } catch (e) {
-        setState(() => _message = 'Gagal Login Admin: $e');
-      }
-      setState(() => _isLoading = false);
-      return;
-    }
     
-    // Logic untuk User biasa (Login via Username atau Nomor Telepon)
+    // Gunakan email fiktif yang sama dengan alur Register
+    final emailFiktif = '$username@archelstore.com';
+
     try {
-      // Cari UID berdasarkan Username/Telepon
-      final userSnapshot = await _dbRef.child('users').orderByChild(input.startsWith('+') ? 'telepon' : 'username').equalTo(input).get();
-      
-      if (!userSnapshot.exists || userSnapshot.value == null) {
-        setState(() => _message = 'Username atau Nomor Telepon tidak ditemukan.');
-        return;
-      }
-      
-      // Ambil data pertama yang cocok
-      final userDataMap = Map<String, dynamic>.from(userSnapshot.value as Map).entries.first;
-      final userUid = userDataMap.key;
-      
-      // >>> PERBAIKAN 1: userModel sekarang digunakan, menghilangkan warning kuning <<<
-      // Deklarasi userModel. Warning kuning hilang jika model ini nanti dipakai
-      final userModel = UserModel.fromMap(userDataMap.value, userUid);
-
-      // Verifikasi Password (Jika password disimpan dalam bentuk plain text/hash di RTDB)
-      if (userModel.password != password) {
-          setState(() => _message = 'Password salah.');
-          return;
-      }
-
-      // Lanjutkan ke otentikasi Firebase Auth (diasumsikan menggunakan UID sebagai Email)
       await _auth.signInWithEmailAndPassword(
-          email: '${userUid}@archelstore.com', // Contoh: menggunakan UID sebagai email login
-          password: password, 
+        email: emailFiktif,
+        password: password,
       );
+      
+      // Jika berhasil, navigasi ke halaman utama (Asumsi: di luar scope file ini)
+      // Contoh: Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
 
-      // Setelah login sukses, AuthWrapper akan mengarahkan ke HomeScreen
-      setState(() => _message = 'Login berhasil!'); 
-
+      setState(() {
+        _message = 'Login Berhasil! Selamat datang, $username.';
+      });
+      
     } on FirebaseAuthException catch (e) {
-      setState(() => _message = 'Gagal Login: ${e.message}');
+      if (e.code == 'user-not-found' || e.code == 'wrong-password') {
+        setState(() => _message = 'Username atau Password salah.');
+      } else {
+        setState(() => _message = 'Error Login: ${e.message}');
+      }
     } catch (e) {
-      setState(() => _message = 'Terjadi kesalahan: $e');
+      setState(() => _message = 'Error Login Umum: $e');
     } finally {
       setState(() => _isLoading = false);
     }
@@ -516,9 +521,15 @@ class _LoginFormState extends State<LoginForm> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text(
-          'Login ke Archel Store',
-          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.blueAccent),
+          'Selamat Datang',
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.blue),
           textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          'Silakan masuk ke akun Anda',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey),
         ),
         const SizedBox(height: 30),
         if (_message.isNotEmpty)
@@ -527,9 +538,10 @@ class _LoginFormState extends State<LoginForm> {
             child: Text(_message, style: TextStyle(color: _message.contains('Berhasil') ? Colors.green : Colors.red), textAlign: TextAlign.center),
           ),
         TextField(
-          controller: _userPhoneController,
+          controller: _usernameController,
           decoration: const InputDecoration(
-            labelText: 'Username atau Nomor Telepon',
+            labelText: 'Username',
+            prefixIcon: Icon(Icons.person),
             border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
           ),
         ),
@@ -539,7 +551,16 @@ class _LoginFormState extends State<LoginForm> {
           obscureText: true,
           decoration: const InputDecoration(
             labelText: 'Password',
+            prefixIcon: Icon(Icons.lock),
             border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            onPressed: widget.onForgot,
+            child: const Text('Lupa Password?'),
           ),
         ),
         const SizedBox(height: 20),
@@ -547,22 +568,18 @@ class _LoginFormState extends State<LoginForm> {
           onPressed: _isLoading ? null : _login,
           style: ElevatedButton.styleFrom(
             padding: const EdgeInsets.symmetric(vertical: 15),
-            backgroundColor: Colors.blueAccent,
+            backgroundColor: Colors.blue,
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           ),
-          child: _isLoading 
-            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) 
-            : const Text('LOGIN', style: TextStyle(fontSize: 18)),
-        ),
-        TextButton(
-          onPressed: widget.onForgot,
-          child: const Text('Lupa Password?'),
+          child: _isLoading
+            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+            : const Text('MASUK', style: TextStyle(fontSize: 18)),
         ),
         const Divider(height: 30),
         TextButton(
           onPressed: widget.onRegister,
-          child: const Text('Belum punya akun? Daftar sekarang!'),
+          child: const Text('Belum punya akun? Daftar Sekarang'),
         ),
       ],
     );
@@ -635,7 +652,9 @@ class _RegisterFormState extends State<RegisterForm> {
       if (e.code == 'weak-password') {
         setState(() => _message = 'Password terlalu lemah.');
       } else if (e.code == 'email-already-in-use') {
-        setState(() => _message = 'Username/Telepon sudah digunakan.');
+        // Ini akan terpicu jika username (yang dijadikan bagian email fiktif) 
+        // sudah ada di Firebase Auth
+        setState(() => _message = 'Username sudah digunakan.');
       } else {
         setState(() => _message = 'Error Daftar: ${e.message}');
       }
@@ -735,8 +754,16 @@ class _ForgotPasswordFormState extends State<ForgotPasswordForm> {
     
     // 2. Kirim ke WA (Simulasi)
     final waUrl = 'https://wa.me/$telepon?text=Kode+OTP+reset+password+Anda+adalah:+\\*[123456]\\*';
-    await launchUrl(Uri.parse(waUrl), mode: LaunchMode.externalApplication);
     
+    try {
+       await launchUrl(Uri.parse(waUrl), mode: LaunchMode.externalApplication);
+    } catch (e) {
+      // Handle jika tidak bisa launch URL (misalnya di Web)
+      setState(() => _message = 'Gagal membuka WhatsApp. Pastikan aplikasi terinstal. $e');
+      _isLoading = false;
+      return;
+    }
+   
     setState(() {
       _message = 'Kode OTP telah dikirimkan ke WhatsApp Anda. Silakan cek WA dan kembali ke halaman login.';
     });
@@ -762,7 +789,7 @@ class _ForgotPasswordFormState extends State<ForgotPasswordForm> {
         if (_message.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 15),
-            child: Text(_message, style: TextStyle(color: _message.contains('Error') ? Colors.red : Colors.blue), textAlign: TextAlign.center),
+            child: Text(_message, style: TextStyle(color: _message.contains('Error') || _message.contains('Gagal') ? Colors.red : Colors.blue), textAlign: TextAlign.center),
           ),
         TextField(
           controller: _teleponController,
@@ -1645,7 +1672,7 @@ class _BuySidebarState extends State<BuySidebar> {
   }
 }
 
-// --- MODAL PIN / BIOMETRIK ---
+// --- MODAL PIN / BIOMETRIK (VERIFIKASI TRANSAKSI) ---
 class PinBiometricVerification extends StatefulWidget {
   final UserModel user;
   final VoidCallback onVerified;
@@ -1657,28 +1684,91 @@ class PinBiometricVerification extends StatefulWidget {
 
 class _PinBiometricVerificationState extends State<PinBiometricVerification> {
   final TextEditingController _pinController = TextEditingController();
-  bool _usePin = true; // Default menggunakan PIN
+  bool _usePin = true; 
   String _message = '';
+  bool _isAuthenticating = false;
 
-  void _verifyPin() {
+  @override
+  void initState() {
+    super.initState();
+    // Jika sidik jari sudah diatur, coba verifikasi dengan biometrik terlebih dahulu
+    if (widget.user.isBiometricSet) {
+      _usePin = false;
+      _authenticateBiometric();
+    }
+  }
+
+  // FUNGSI BARU: Verifikasi Biometrik Asli (Sudah ada delay)
+  Future<void> _authenticateBiometric() async {
+    if (_isAuthenticating) return;
+    
+    setState(() {
+      _isAuthenticating = true;
+      _message = 'Memulai pemindaian Sidik Jari...';
+    });
+    
+    final isAvailable = await _localAuthService.checkBiometrics();
+    if (!isAvailable) {
+      setState(() {
+        _message = 'Perangkat tidak mendukung atau Sidik Jari belum disetup di OS. Silakan gunakan PIN.';
+        _usePin = true;
+        _isAuthenticating = false;
+      });
+      return;
+    }
+
+    final didAuthenticate = await _localAuthService.authenticate(
+        'Verifikasi Sidik Jari untuk menyelesaikan pembayaran Arc Coin');
+
+    if (mounted) {
+      if (didAuthenticate) {
+        // 1. Tampilkan notif berhasil verifikasi di dialog
+        setState(() => _message = 'Sidik Jari berhasil diverifikasi!');
+        
+        // 2. Beri jeda singkat agar pesan berhasil terlihat (Sudah ada)
+        await Future.delayed(const Duration(milliseconds: 500)); 
+        
+        // 3. Lanjutkan ke transaksi
+        if (mounted) { // Pengecekan mounted tambahan
+             widget.onVerified();
+        }
+      } else {
+        setState(() {
+          _message = 'Verifikasi Sidik Jari gagal atau dibatalkan. Gunakan PIN.';
+          _usePin = true;
+          _isAuthenticating = false;
+        });
+      }
+    }
+  }
+  
+  // FUNGSI PIN (DIPERBAIKI DENGAN DELAY)
+  Future<void> _verifyPin() async { // Dibuat async
     if (_pinController.text == widget.user.pin) {
-      widget.onVerified();
+      // 1. Tampilkan notif berhasil verifikasi di dialog
+      setState(() => _message = 'PIN berhasil diverifikasi!');
+      
+      // 2. Beri jeda singkat agar pesan berhasil terlihat
+      await Future.delayed(const Duration(milliseconds: 500)); 
+      
+      // 3. Lanjutkan ke transaksi
+      if (mounted) { // Pengecekan mounted untuk menghindari error setelah pop
+          widget.onVerified();
+      }
     } else {
       setState(() => _message = 'PIN salah.');
     }
   }
 
-  void _simulatedBiometricVerification() {
-    // Simulasi verifikasi biometrik
-    setState(() => _message = 'Verifikasi Sidik Jari... (Simulasi)');
-    Future.delayed(const Duration(seconds: 1), () {
-      widget.onVerified();
-    });
+  @override
+  void dispose() {
+    _pinController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Jika PIN belum diatur, paksa ke pengaturan PIN
+    // ... (Sisa kode Build Method PinBiometricVerification tidak ada perubahan)
     if (widget.user.pin == null) {
       return AlertDialog(
         title: const Text('Atur PIN Terlebih Dahulu'),
@@ -1688,8 +1778,9 @@ class _PinBiometricVerificationState extends State<PinBiometricVerification> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
+              // Asumsi AccountSettingsScreen ada dalam navigasi
               Navigator.of(context).push(MaterialPageRoute(
-                builder: (context) => const AccountSettingsScreen(),
+                builder: (context) => const AccountSettingsScreen(), 
               ));
             },
             child: const Text('Atur Sekarang'),
@@ -1703,9 +1794,19 @@ class _PinBiometricVerificationState extends State<PinBiometricVerification> {
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Pesan Status
           if (_message.isNotEmpty)
-            Text(_message, style: TextStyle(color: _message.contains('salah') ? Colors.red : Colors.blue)),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: Text(_message, 
+                style: TextStyle(
+                  color: _message.contains('salah') || _message.contains('gagal') ? Colors.red : Colors.blue,
+                  fontWeight: FontWeight.bold
+                )
+              ),
+            ),
           
+          // Input PIN (Hanya ditampilkan jika mode PIN aktif)
           if (_usePin)
             TextField(
               controller: _pinController,
@@ -1715,9 +1816,20 @@ class _PinBiometricVerificationState extends State<PinBiometricVerification> {
               decoration: const InputDecoration(labelText: 'Masukkan PIN 6 Digit'),
             ),
           
+          // Ikon Biometrik (Hanya ditampilkan jika mode Biometrik aktif)
+          if (!_usePin && widget.user.isBiometricSet)
+            Column(
+              children: [
+                const Icon(Icons.fingerprint, size: 50, color: Colors.blueAccent),
+                const SizedBox(height: 5),
+                Text(_isAuthenticating ? 'Menunggu verifikasi sistem...' : 'Sidik Jari aktif. Pindai sidik jari Anda.'),
+              ],
+            ),
+          
           const SizedBox(height: 10),
           
-          if (widget.user.isBiometricSet)
+          // Tombol Toggle PIN/Biometrik
+          if (widget.user.isBiometricSet && !_isAuthenticating)
             TextButton.icon(
               icon: Icon(_usePin ? Icons.fingerprint : Icons.lock),
               label: Text(_usePin ? 'Gunakan Sidik Jari' : 'Gunakan PIN'),
@@ -1725,25 +1837,20 @@ class _PinBiometricVerificationState extends State<PinBiometricVerification> {
                 setState(() {
                   _usePin = !_usePin;
                   _message = '';
-                  if (!_usePin) _simulatedBiometricVerification();
+                  if (!_usePin) _authenticateBiometric();
                 });
               },
             ),
-          
-          if (!_usePin && !widget.user.isBiometricSet)
-            const Text('Sidik jari belum diatur. Silakan gunakan PIN.'),
         ],
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
-        if (_usePin)
+        if (_usePin && !_isAuthenticating)
           ElevatedButton(onPressed: _verifyPin, child: const Text('Konfirmasi PIN')),
       ],
     );
   }
 }
-
-
 // --- WIDGET MY ORDER ---
 class MyOrderScreen extends StatelessWidget {
   const MyOrderScreen({super.key});
@@ -1950,7 +2057,6 @@ class UserProfileScreen extends StatelessWidget {
     await launchUrl(Uri.parse(waUrl), mode: LaunchMode.externalApplication);
   }
 }
-
 // --- SCREEN PENGATURAN AKUN (PIN & BIOMETRIK) ---
 class AccountSettingsScreen extends StatefulWidget {
   const AccountSettingsScreen({super.key});
@@ -2025,6 +2131,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
       builder: (context) => PinSettingDialog(user: user),
     );
     final userSnapshot = await _dbRef.child('users').child(user.uid).get();
+    // Gunakan '!' karena diasumsikan user selalu ada setelah snapshot
     final updatedUser = UserModel.fromMap(Map<String, dynamic>.from(userSnapshot.value as Map), user.uid);
     if (updatedUser.pin != null && user.pin == null) {
       setState(() => _message = 'PIN berhasil diatur!');
@@ -2037,23 +2144,51 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
       return;
     }
     
-    // Logika simulasi pengaturan biometrik
+    // Tampilkan verifikasi PIN sebelum melakukan otentikasi biometrik
     showDialog(
       context: context,
       builder: (context) => BiometricSettingDialog(
         user: user,
-        onPinVerified: () async {
-          // Setelah PIN terverifikasi, update status biometrik
-          final newStatus = !user.isBiometricSet;
-          await _dbRef.child('users').child(user.uid).update({'isBiometricSet': newStatus});
-          Navigator.pop(context);
-          setState(() => _message = newStatus ? 'Sidik Jari berhasil diatur.' : 'Sidik Jari berhasil dihapus.');
-        },
+        onPinVerified: () => _enrollOrDeleteBiometric(context, user),
       ),
     );
   }
-}
 
+  // FUNGSI BARU: Menggunakan LocalAuthService untuk pendaftaran/penghapusan biometrik asli
+  Future<void> _enrollOrDeleteBiometric(BuildContext context, UserModel user) async {
+    // Tutup dialog PIN setelah verifikasi
+    Navigator.pop(context); 
+
+    final isAvailable = await _localAuthService.checkBiometrics();
+    if (!isAvailable) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Perangkat tidak mendukung atau belum mengaktifkan Sidik Jari.')));
+      return;
+    }
+
+    final reason = user.isBiometricSet 
+        ? 'Konfirmasi untuk MENGHAPUS Sidik Jari dari aplikasi ini' 
+        : 'Pindai sidik jari Anda untuk MENYIMPAN sebagai metode otentikasi';
+    
+    // Autentikasi biometrik asli
+    final didAuthenticate = await _localAuthService.authenticate(reason);
+
+    if (didAuthenticate) {
+      final newStatus = !user.isBiometricSet;
+      
+      // Simpan status biometrik ke database ('isBiometricSet' = tersimpan di authentication database)
+      await _dbRef.child('users').child(user.uid).update({'isBiometricSet': newStatus}); //
+      
+      // Update UI dan tampilkan pesan
+      setState(() => _message = newStatus 
+          ? 'Sidik Jari berhasil diatur dan tersimpan di authentication database.' 
+          : 'Sidik Jari berhasil dihapus.');
+      
+    } else {
+      // Autentikasi gagal atau dibatalkan
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Gagal melakukan verifikasi Sidik Jari. Silakan coba lagi.')));
+    }
+  }
+}
 // --- DIALOG PENGATURAN PIN ---
 class PinSettingDialog extends StatefulWidget {
   final UserModel user;
@@ -2143,11 +2278,20 @@ class _BiometricSettingDialogState extends State<BiometricSettingDialog> {
   String _message = '';
 
   void _verifyPin() {
+    // Verifikasi PIN
     if (_pinController.text == widget.user.pin) {
-      widget.onPinVerified();
+      // Jika PIN benar, panggil callback untuk melanjutkan ke proses Biometrik (enroll/delete)
+      widget.onPinVerified(); 
     } else {
+      // Jika PIN salah, tampilkan pesan error
       setState(() => _message = 'PIN salah.');
     }
+  }
+
+  @override
+  void dispose() {
+    _pinController.dispose();
+    super.dispose();
   }
 
   @override
@@ -2157,10 +2301,14 @@ class _BiometricSettingDialogState extends State<BiometricSettingDialog> {
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Tampilkan pesan error jika ada
           if (_message.isNotEmpty)
             Text(_message, style: const TextStyle(color: Colors.red)),
           
+          // Instruksi untuk pengguna
           const Text('Masukkan PIN Anda untuk mengkonfirmasi perubahan:'),
+          
+          // Input field untuk PIN
           TextField(
             controller: _pinController,
             keyboardType: TextInputType.number,
@@ -2171,7 +2319,10 @@ class _BiometricSettingDialogState extends State<BiometricSettingDialog> {
         ],
       ),
       actions: [
+        // Tombol Batal
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
+        
+        // Tombol Konfirmasi yang memicu verifikasi PIN
         ElevatedButton(onPressed: _verifyPin, child: const Text('Konfirmasi')),
       ],
     );

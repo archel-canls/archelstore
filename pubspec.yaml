@@ -32,7 +32,7 @@ dependencies:
   # --- Tambahan package yang dibutuhkan ---
   url_launcher: ^6.2.0 # Package untuk membuka URL, email, atau telepon
   # ---------------------------------------
-
+  local_auth: ^2.1.7
   # --- Tambahan untuk Firebase (Wajib untuk Core, Auth, dan RTDB) ---
   firebase_core: ^4.2.1 
   firebase_auth: ^6.1.2 # Untuk Otentikasi Nomor Telepon

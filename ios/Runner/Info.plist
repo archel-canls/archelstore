@@ -45,5 +45,11 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+</dict>
+<key>NSFaceIDUsageDescription</key>
+<string>Digunakan untuk mengautentikasi pembayaran dan login Anda secara cepat dan aman.</string>
+</plist>
 </dict>
 </plist>
