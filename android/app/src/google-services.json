@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "474403931284",
+    "firebase_url": "https://archelstore-777-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "archelstore-777",
+    "storage_bucket": "archelstore-777.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:474403931284:android:be4079726a376b981ce081",
+        "android_client_info": {
+          "package_name": "com.archel.archelstore"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBy6B6TzWW0eDVJ1vkHwZ32FiLsBDYIcz8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
