@@ -9,7 +9,7 @@ import '../../services/db_service.dart';
 import '../../services/notif_service.dart';
 import '../../services/local_auth_service.dart';
 import '../../models/product_model.dart';
-import '../../models/order_model.dart'; // Import OrderItem dari sini
+import '../../models/order_model.dart'; 
 import '../../widgets/custom_button.dart';
 import '../security/pin_input_screen.dart';
 
@@ -26,19 +26,14 @@ class _CartScreenState extends State<CartScreen> {
   final fmt = NumberFormat.currency(locale: 'id_ID', symbol: 'Rp ', decimalDigits: 0);
   
   bool _isLoading = false;
+  
+  // Variabel untuk menyimpan hasil perhitungan total
   double _totalPrice = 0;
   List<OrderItem> _cartItems = []; 
   
   String? get _userId => Provider.of<AuthService>(context, listen: false).currentUser?.uid;
   bool get _isBioEnabled => Provider.of<AuthService>(context, listen: false).currentUser?.isBiometricEnabled ?? false;
   double get _userBalance => Provider.of<AuthService>(context, listen: false).currentUser?.arcCoin ?? 0;
-
-  @override
-  void initState() {
-    super.initState();
-    // Panggil perhitungan awal
-    _calculateTotal();
-  }
 
   // --- LOGIKA UTAMA CHECKOUT ---
   Future<void> _processCheckout() async {
@@ -63,11 +58,9 @@ class _CartScreenState extends State<CartScreen> {
     await _executeOrder();
   }
 
-  // --- LOGIKA VERIFIKASI KEAMANAN (PIN/BIO) ---
   Future<bool> _performVerification() async {
     if (_userId == null) return false;
 
-    // Cek PIN wajib ada
     String? storedPin = await _dbService.getUserPin(_userId!);
     if (storedPin == null) {
       NotifService.showWarning("PIN keamanan belum diatur. Silakan atur di Pengaturan.");
@@ -76,16 +69,12 @@ class _CartScreenState extends State<CartScreen> {
 
     bool verified = false;
 
-    // Prioritas 1: Biometrik (Jika Aktif)
     if (_isBioEnabled) {
       verified = await _localAuth.authenticateBiometric(reason: "Konfirmasi pembayaran keranjang");
     }
 
-    // Fallback ke PIN jika Biometrik mati/gagal
     if (!verified) {
       if (!mounted) return false;
-      // allowBiometric=true jika bio enabled, false jika tidak. 
-      // Tombol Sidik Jari akan muncul jika _isBioEnabled=true
       verified = await Navigator.push(
         context,
         MaterialPageRoute(builder: (_) => PinInputScreen(userId: _userId!, isVerifying: true, allowBiometric: _isBioEnabled)),
@@ -95,13 +84,11 @@ class _CartScreenState extends State<CartScreen> {
     return verified;
   }
 
-  // --- EKSEKUSI FINAL ORDER ---
   Future<void> _executeOrder() async {
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 500)); // Loading estetik
+    await Future.delayed(const Duration(milliseconds: 500)); 
 
     try {
-      // 1. Buat Order
       await _dbService.createOrder(
         userId: _userId!, 
         items: _cartItems, 
@@ -110,10 +97,8 @@ class _CartScreenState extends State<CartScreen> {
         voucherCode: null, 
       );
       
-      // 2. Potong Saldo
       await _dbService.updateUserSaldo(_userId!, _userBalance - _totalPrice);
 
-      // 3. Kosongkan Keranjang
       await FirebaseDatabase.instance.ref('users/${_userId!}/cart').remove();
 
       if (!mounted) return;
@@ -126,26 +111,17 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  // --- LOGIKA PERHITUNGAN TOTAL (Dipanggil setiap data berubah) ---
-  Future<void> _calculateTotal() async {
+  // --- LOGIKA PERHITUNGAN TOTAL (STABIL) ---
+  // Fungsi ini sekarang dipanggil ASYNCHRONOUSLY saat stream berubah, dan
+  // hanya memanggil setState sekali di akhir, mencegah loop.
+  Future<void> _calculateTotal(Map cartMap) async {
     if (_userId == null) return;
     
     double tempTotal = 0;
     List<OrderItem> tempItems = [];
     
-    DataSnapshot snap = await FirebaseDatabase.instance.ref('users/${_userId!}/cart').get();
-    if(!snap.exists) {
-      if(mounted) setState(() {
-        _totalPrice = 0;
-        _cartItems = [];
-      });
-      return;
-    }
-
-    Map map = snap.value as Map;
-    
-    for(var key in map.keys) {
-      int q = int.parse(map[key].toString());
+    for(var key in cartMap.keys) {
+      int q = int.parse(cartMap[key].toString());
       DataSnapshot pSnap = await FirebaseDatabase.instance.ref('products/$key').get();
       if(pSnap.exists) {
         ProductModel p = ProductModel.fromMap(key, pSnap.value as Map);
@@ -154,7 +130,8 @@ class _CartScreenState extends State<CartScreen> {
       }
     }
 
-    if(mounted) {
+    // Hanya panggil setState jika nilainya berubah atau ini adalah perhitungan pertama
+    if(mounted && (_totalPrice != tempTotal || _cartItems.length != tempItems.length)) {
       setState(() {
         _totalPrice = tempTotal;
         _cartItems = tempItems;
@@ -185,95 +162,102 @@ class _CartScreenState extends State<CartScreen> {
             child: StreamBuilder<DatabaseEvent>(
               stream: cartRef.onValue,
               builder: (context, snapshot) {
-                // Panggil perhitungan setiap kali data keranjang berubah
-                WidgetsBinding.instance.addPostFrameCallback((_) => _calculateTotal());
-
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
-
-                if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
-                  return const Center(child: Text("Keranjang Kosong. Yuk, belanja dulu!"));
-                }
-
-                Map cartMap = snapshot.data!.snapshot.value as Map;
                 
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: cartMap.length,
-                  itemBuilder: (ctx, i) {
-                    String pid = cartMap.keys.elementAt(i);
-                    int qty = int.parse(cartMap.values.elementAt(i).toString());
+                // Pastikan _calculateTotal dipanggil saat data baru diterima
+                if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
+                    Map cartMap = snapshot.data!.snapshot.value as Map;
+                    // Panggil fungsi perhitungan tanpa menunggu hasilnya, biarkan ia update state sendiri
+                    // Ini jauh lebih stabil daripada memanggilnya di addPostFrameCallback
+                    _calculateTotal(cartMap);
 
-                    return FutureBuilder<DataSnapshot>(
-                      future: FirebaseDatabase.instance.ref('products/$pid').get(),
-                      builder: (context, prodSnap) {
-                        if (!prodSnap.hasData || !prodSnap.data!.exists) return const SizedBox(); 
+                    // Tampilkan List
+                    return ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: cartMap.length,
+                      itemBuilder: (ctx, i) {
+                        String pid = cartMap.keys.elementAt(i);
+                        int qty = int.parse(cartMap.values.elementAt(i).toString());
 
-                        ProductModel p = ProductModel.fromMap(pid, prodSnap.data!.value as Map);
-                        
-                        return Card(
-                          elevation: 2,
-                          margin: const EdgeInsets.only(bottom: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.network(p.coverUrl, width: 70, height: 70, fit: BoxFit.cover),
-                                ),
-                                const SizedBox(width: 15),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(p.nama, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                                      const SizedBox(height: 4),
-                                      Text(fmt.format(p.harga), style: const TextStyle(color: Color(0xFFE91E63), fontWeight: FontWeight.bold)),
-                                      Text("Stok Tersisa: ${p.stock}", style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                                    ],
-                                  ),
-                                ),
-                                // Tombol Kuantitas
-                                Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
+                        // Menggunakan FutureBuilder untuk setiap item untuk fetch detail produk
+                        return FutureBuilder<DataSnapshot>(
+                          future: FirebaseDatabase.instance.ref('products/$pid').get(),
+                          builder: (context, prodSnap) {
+                            if (!prodSnap.hasData || !prodSnap.data!.exists) {
+                              // Item Hilang/Loading, tampilkan loading kecil atau biarkan SizedBox
+                              return const SizedBox(height: 10); 
+                            }
+
+                            ProductModel p = ProductModel.fromMap(pid, prodSnap.data!.value as Map);
+                            
+                            return Card(
+                              elevation: 2,
+                              margin: const EdgeInsets.only(bottom: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
-                                      visualDensity: VisualDensity.compact,
-                                      onPressed: () {
-                                        if (qty > 1) {
-                                          cartRef.child(pid).set(qty - 1);
-                                        } else {
-                                          cartRef.child(pid).remove();
-                                        }
-                                      },
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Image.network(p.coverUrl, width: 70, height: 70, fit: BoxFit.cover),
                                     ),
-                                    Text("$qty", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                    IconButton(
-                                      icon: Icon(Icons.add_circle_outline, color: qty < p.stock ? const Color(0xFFE91E63) : Colors.grey),
-                                      visualDensity: VisualDensity.compact,
-                                      onPressed: () {
-                                        if (qty < p.stock) {
-                                          cartRef.child(pid).set(qty + 1);
-                                        } else {
-                                          NotifService.showWarning("Stok maksimal tercapai!");
-                                        }
-                                      },
+                                    const SizedBox(width: 15),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(p.nama, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                          const SizedBox(height: 4),
+                                          Text(fmt.format(p.harga), style: const TextStyle(color: Color(0xFFE91E63), fontWeight: FontWeight.bold)),
+                                          Text("Stok Tersisa: ${p.stock}", style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                                        ],
+                                      ),
                                     ),
+                                    // Tombol Kuantitas
+                                    Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
+                                          visualDensity: VisualDensity.compact,
+                                          onPressed: () {
+                                            if (qty > 1) {
+                                              cartRef.child(pid).set(qty - 1);
+                                            } else {
+                                              cartRef.child(pid).remove();
+                                            }
+                                          },
+                                        ),
+                                        Text("$qty", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                        IconButton(
+                                          icon: Icon(Icons.add_circle_outline, color: qty < p.stock ? const Color(0xFFE91E63) : Colors.grey),
+                                          visualDensity: VisualDensity.compact,
+                                          onPressed: () {
+                                            if (qty < p.stock) {
+                                              cartRef.child(pid).set(qty + 1);
+                                            } else {
+                                              NotifService.showWarning("Stok maksimal tercapai!");
+                                            }
+                                          },
+                                        ),
+                                      ],
+                                    )
                                   ],
-                                )
-                              ],
-                            ),
-                          ),
+                                ),
+                              ),
+                            );
+                          },
                         );
                       },
                     );
-                  },
-                );
+                }
+                
+                // Jika snapshot tidak ada data/kosong
+                return const Center(child: Text("Keranjang Kosong. Yuk, belanja dulu!"));
               },
             ),
           ),

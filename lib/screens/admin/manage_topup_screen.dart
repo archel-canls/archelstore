@@ -27,7 +27,7 @@ class ManageTopUpScreen extends StatelessWidget {
     NotifService.showWarning("Permintaan Ditolak");
   }
 
-  // Popup Lihat Gambar Bukti
+  // Popup Lihat Gambar Bukti (Menangani URL Placeholder)
   void _showProofDialog(BuildContext context, String imageUrl) {
     showDialog(
       context: context,
@@ -42,11 +42,11 @@ class ManageTopUpScreen extends StatelessWidget {
               backgroundColor: Colors.white,
               foregroundColor: Colors.black,
             ),
-            InteractiveViewer( // Agar bisa di-zoom
+            InteractiveViewer( 
               child: Image.network(
                 imageUrl, 
                 loadingBuilder: (c, child, p) => p == null ? child : const SizedBox(height: 200, child: Center(child: CircularProgressIndicator())),
-                errorBuilder: (c, o, s) => const SizedBox(height: 200, child: Center(child: Text("Gagal memuat gambar"))),
+                errorBuilder: (c, o, s) => const SizedBox(height: 200, child: Center(child: Text("Gagal memuat gambar atau link tidak valid."))),
               ),
             ),
           ],
@@ -65,6 +65,10 @@ class ManageTopUpScreen extends StatelessWidget {
       body: StreamBuilder<DatabaseEvent>(
         stream: ref.orderByChild('status').equalTo('pending').onValue,
         builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          
           if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
             return const Center(child: Text("Tidak ada permintaan baru"));
           }

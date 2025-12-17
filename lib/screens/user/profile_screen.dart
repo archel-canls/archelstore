@@ -210,7 +210,7 @@ class ProfileScreen extends StatelessWidget {
                       
                       // VOUCHER
                       _buildSettingsTile(
-                        icon: Icons.confirmation_number_outlined, color: Colors.blueAccent, title: "ARC VIP",
+                        icon: Icons.confirmation_number_outlined, color: Colors.blueAccent, title: "VIP Upgrage & Voucher",
                         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VoucherScreen())),
                       ),
                       const Divider(height: 1),
